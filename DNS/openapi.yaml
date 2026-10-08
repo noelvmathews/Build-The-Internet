@@ -1,0 +1,87 @@
+openapi: 3.0.3
+info:
+  title: acm-dns
+  description: Service Discovery / DNS Service for resolving and registering local microservice domains.
+  version: 1.0.0
+paths:
+  /lookup:
+    get:
+      summary: Lookup destination IP for a domain
+      description: Returns the resolved destination IP address associated with the requested domain name.
+      parameters:
+        - name: domain
+          in: query
+          required: true
+          description: The domain name to resolve (e.g., auth-service)
+          schema:
+            type: string
+          example: auth-service
+      responses:
+        '200':
+          description: Domain resolved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - domain
+                  - destination
+                properties:
+                  domain:
+                    type: string
+                    example: auth-service
+                  destination:
+                    type: string
+                    description: IP address or host endpoint mapped to the domain
+                    example: 192.168.1.105
+        '404':
+          description: Domain not found in registry
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Domain not registered
+
+  /register:
+    post:
+      summary: Register a domain name
+      description: Registers a domain name in the DNS table. The server automatically captures the client's source IP address from the request origin.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - domain
+              properties:
+                domain:
+                  type: string
+                  description: The domain name to map to the client's source IP
+                  example: auth-service
+      responses:
+        '200':
+          description: Domain registered successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - status
+                properties:
+                  status:
+                    type: string
+                    example: ok
+        '400':
+          description: Invalid JSON body or missing domain parameter
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Missing required 'domain' field
