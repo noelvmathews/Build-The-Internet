@@ -1,0 +1,160 @@
+ACM-SERVER TEAM HANDOFF
+=======================
+
+Service owner: AUTH SERVER
+Project folder:
+C:\Users\muham\Documents\Codex\2026-10-08\openapi-3-0-3-info-x20
+
+WHAT THIS SERVICE DOES
+----------------------
+acm-server provides registration, login, password verification, session cookies,
+and the current-user endpoint. It is a separate service and expects DNS and DB
+to run on other team laptops.
+
+FILES
+-----
+src/server.js       HTTP service implementation
+package.json        Node project metadata and start command
+.env.example        Configuration template; replace placeholders with team values
+Dockerfile          Optional container setup; the four-laptop setup can run Node directly
+.dockerignore       Container build exclusions
+README.md           Integration notes and API summary
+
+PUBLIC API
+----------
+POST /register
+  JSON: { "username": "alice", "password": "secret123" }
+  Success: 201 { "status": "ok", "message": "User registered successfully" }
+  Duplicate username: 400 { "error": "Username already exists" }
+  Password must be at least 8 characters. The server hashes it with scrypt
+  before sending password_hash to acm-db.
+
+POST /login
+  JSON: { "username": "alice", "password": "secret123" }
+  Success: 200 and Set-Cookie session_id=...; HttpOnly; SameSite=Lax
+  Invalid credentials: 401 { "error": "Invalid username or password" }
+  Unknown username and wrong password intentionally return the same response.
+
+GET /whoami
+  Send the session_id cookie.
+  Success: { "status": "ok", "user_id": 101, "username": "alice" }
+  Missing/invalid/expired session: 401.
+
+GET /health
+  Process check only; it does not check DNS or DB health.
+
+DNS INTEGRATION
+---------------
+Lookup follows acm-dns.yaml:
+  GET {DNS_URL}/lookup?domain=acm-db
+  Expected JSON: { "domain": "acm-db", "destination": "<DB_IP>" }
+
+The server appends DB_PORT when destination is a host/IP. If destination is a
+full http:// or https:// URL, it uses that URL as-is. The resolved DB address is
+cached for this server process.
+
+At startup the server attempts:
+  POST {DNS_URL}/register
+  JSON sent: { "domain": "acm-server", "address": "<SERVER_IP>:<PORT>" }
+
+IMPORTANT DNS TEAM ACTION:
+The supplied acm-dns.yaml says the register body requires only domain and DNS
+captures the request source IP. This server also sends address, but DNS must
+store/honor that field for cross-laptop access, or DNS must otherwise return a
+reachable server IP and port. Confirm this behavior together. The client needs
+DNS lookup for domain acm-server to return an address and port it can reach.
+
+DATABASE INTEGRATION
+--------------------
+Matches the supplied acm-db.yaml user routes:
+  POST /db/users
+  Body: { "username": "alice", "password_hash": "scrypt$..." }
+  Expected success: { "status": "ok", "user_id": 101 }
+  Duplicate: the documented HTTP 400 response.
+
+  GET /db/users/{username}
+  Expected response:
+  { "user_id": 101, "username": "alice", "password_hash": "scrypt$..." }
+
+IMPORTANT DB TEAM ACTION:
+Store and return password_hash as an opaque string. Do not assume the example
+SHA-256 value/length in the YAML; this server sends a scrypt-encoded hash.
+The DB contract currently has no session endpoints. Sessions therefore live
+in acm-server memory and are lost when the server process restarts. Login and
+/whoami work while the process stays running. Persistent sessions would require
+session storage endpoints to be added to the agreed DB contract.
+
+CLIENT TEAM NOTES
+-----------------
+1. Ask the user for the DNS service URL/address.
+2. Call GET /lookup?domain=acm-server on acm-dns.
+3. Use DNS destination plus the agreed server port as the acm-server base URL.
+4. Call POST /register or POST /login with JSON credentials.
+5. Send browser requests with credentials enabled so session_id is retained and
+   sent to GET /whoami.
+6. DNS must return an address reachable by the browser's laptop.
+7. If client and server use different web origins, server CORS support may be
+   needed. It is not currently implemented. Browser cookies also require a
+   compatible deployment; Secure cookies require HTTPS.
+8. The client spec asks for a live icon-based flow visualization. That belongs
+   in acm-app, not in this service.
+
+CONFIGURATION
+-------------
+Set these values in the terminal before starting (or use an agreed env-file
+loader; this project does not currently load .env automatically):
+
+  PORT=3000
+  DNS_URL=http://<DNS_IP>:<DNS_PORT>
+  DNS_LOOKUP_PATH=/lookup
+  DNS_REGISTER_PATH=/register
+  SERVICE_NAME=acm-server
+  SERVICE_ADVERTISE_ADDRESS=<SERVER_IP>:3000
+  DB_SERVICE_NAME=acm-db
+  DB_PORT=<DB_PORT>
+  DB_REGISTER_PATH=/db/users
+  DB_FIND_USER_PATH=/db/users
+  DB_TIMEOUT_MS=3000
+  SESSION_TTL_SECONDS=86400
+  COOKIE_SECURE=false
+
+SERVICE_ADVERTISE_ADDRESS must use the server laptop's reachable LAN address
+and listening port. Do not commit real team IPs into application source code.
+Set COOKIE_SECURE=true when serving over HTTPS.
+
+RUN
+---
+Requires Node.js 20 or newer.
+
+PowerShell example (replace placeholders):
+  $env:DNS_URL = "http://<DNS_IP>:<DNS_PORT>"
+  $env:SERVICE_ADVERTISE_ADDRESS = "<SERVER_IP>:3000"
+  $env:DB_PORT = "<DB_PORT>"
+  $env:PORT = "3000"
+  npm start
+
+The service listens on 0.0.0.0 at PORT (default 3000), so other laptops can
+connect if the laptop firewall/network allows that port.
+
+TEAM STARTUP AND SMOKE TEST
+---------------------------
+Start DNS, then DB, then acm-server, then the client. Verify DNS has registered
+acm-server and resolves acm-db before client login testing.
+
+Test flow:
+1. POST /register with a new username/password; expect 201.
+2. POST /login with those credentials; expect 200 and Set-Cookie.
+3. GET /whoami with the returned session cookie; expect the matching user.
+4. Try a wrong password; expect 401.
+
+CURRENT LIMITATIONS / DECISIONS
+-------------------------------
+- No CORS handling is implemented yet. Add it if browser and server origins differ.
+- Sessions are in memory, expire according to SESSION_TTL_SECONDS, and disappear
+  on server restart.
+- DNS registration must support the advertised address for reliable laptop-to-
+  laptop discovery. The provided DNS schema does not currently describe it.
+- Database DNS responses provide destination only; DB_PORT supplies the port
+  unless destination already contains a full URL.
+- Node.js and Docker were unavailable during the initial setup, and the service
+  has not yet been run through a full integration test in this environment.
